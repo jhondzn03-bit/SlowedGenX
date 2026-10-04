@@ -1,18 +1,76 @@
-import {
-  downloadContentFromMessage
-} from '@whiskeysockets/baileys';
+import { downloadMediaMessage } from "../media.js";
+
+function detectarMedia(msg) {
+  // Media enviada directamente
+  const directo =
+    msg.message?.imageMessage ||
+    msg.message?.videoMessage ||
+    msg.message?.audioMessage ||
+    msg.message?.documentMessage ||
+    msg.message?.stickerMessage;
+
+  if (directo) {
+    const tipo =
+      msg.message.imageMessage ? "image" :
+      msg.message.videoMessage ? "video" :
+      msg.message.audioMessage ? "audio" :
+      msg.message.documentMessage ? "document" :
+      "sticker";
+
+    return {
+      mensajeParaDescargar: msg,
+      media: directo,
+      tipo
+    };
+  }
+
+  // Media de un mensaje respondido
+  const info = msg.message?.extendedTextMessage?.contextInfo;
+  const citado = info?.quotedMessage;
+
+  if (!citado) return null;
+
+  const media =
+    citado.imageMessage ||
+    citado.videoMessage ||
+    citado.audioMessage ||
+    citado.documentMessage ||
+    citado.stickerMessage;
+
+  if (!media) return null;
+
+  const tipo =
+    citado.imageMessage ? "image" :
+    citado.videoMessage ? "video" :
+    citado.audioMessage ? "audio" :
+    citado.documentMessage ? "document" :
+    "sticker";
+
+  return {
+    mensajeParaDescargar: {
+      message: citado,
+      key: {
+        remoteJid: null,
+        id: info.stanzaId,
+        participant: info.participant
+      }
+    },
+    media,
+    tipo
+  };
+}
 
 export default {
-  command: ['n'],
-  category: 'group',
-  description: 'Menciona a todos los miembros del grupo',
+  command: ["n"],
+  category: "group",
+  description: "Menciona a todos los miembros del grupo",
 
   run: async (sock, msg, args, context) => {
     const { chatId } = context;
 
-    if (!chatId.endsWith('@g.us')) {
+    if (!chatId.endsWith("@g.us")) {
       return sock.sendMessage(chatId, {
-        text: '❌ Este comando solo puede usarse en grupos.'
+        text: "❌ Este comando solo puede usarse en grupos."
       }, { quoted: msg });
     }
 
@@ -20,23 +78,9 @@ export default {
     const participants = metadata.participants;
     const mentions = participants.map(p => p.id);
 
-    const texto = args.join(' ').trim();
+    const texto = args.join(" ").trim();
 
-    // Buscar mensaje citado
-    const message = msg?.message;
-    const contextInfo =
-      message?.extendedTextMessage?.contextInfo ||
-      message?.imageMessage?.contextInfo ||
-      message?.videoMessage?.contextInfo ||
-      message?.audioMessage?.contextInfo ||
-      message?.documentMessage?.contextInfo ||
-      message?.stickerMessage?.contextInfo;
-
-    const quoted = contextInfo?.quotedMessage;
-
-    // ─────────────────────────────
     // .n TEXTO
-    // ─────────────────────────────
     if (texto) {
       await sock.sendMessage(chatId, {
         text: texto,
@@ -46,28 +90,31 @@ export default {
       return;
     }
 
-    // ─────────────────────────────
-    // .n RESPONDIENDO A MULTIMEDIA
-    // ─────────────────────────────
-    if (quoted) {
+    // .n RESPONDIENDO A MEDIA
+    const encontrado = detectarMedia(msg);
+
+    if (encontrado) {
       try {
+        const {
+          mensajeParaDescargar,
+          media,
+          tipo
+        } = encontrado;
+
+        if (mensajeParaDescargar.key) {
+          mensajeParaDescargar.key.remoteJid = chatId;
+        }
+
+        const buffer = await downloadMediaMessage(
+          mensajeParaDescargar,
+          tipo
+        );
+
         // IMAGEN
-        if (quoted.imageMessage) {
-          const stream = await downloadContentFromMessage(
-            quoted.imageMessage,
-            'image'
-          );
-
-          const chunks = [];
-          for await (const chunk of stream) {
-            chunks.push(chunk);
-          }
-
-          const buffer = Buffer.concat(chunks);
-
+        if (tipo === "image") {
           await sock.sendMessage(chatId, {
             image: buffer,
-            caption: quoted.imageMessage.caption || '',
+            caption: media.caption || "",
             mentions
           }, { quoted: msg });
 
@@ -75,130 +122,61 @@ export default {
         }
 
         // VIDEO
-        if (quoted.videoMessage) {
-          const stream = await downloadContentFromMessage(
-            quoted.videoMessage,
-            'video'
-          );
-
-          const chunks = [];
-          for await (const chunk of stream) {
-            chunks.push(chunk);
-          }
-
-          const buffer = Buffer.concat(chunks);
-
+        if (tipo === "video") {
           await sock.sendMessage(chatId, {
             video: buffer,
-            caption: quoted.videoMessage.caption || '',
-            mentions,
-            mimetype: quoted.videoMessage.mimetype
+            caption: media.caption || "",
+            mentions
           }, { quoted: msg });
 
           return;
         }
 
         // AUDIO
-        if (quoted.audioMessage) {
-          const stream = await downloadContentFromMessage(
-            quoted.audioMessage,
-            'audio'
-          );
-
-          const chunks = [];
-          for await (const chunk of stream) {
-            chunks.push(chunk);
-          }
-
-          const buffer = Buffer.concat(chunks);
-
+        if (tipo === "audio") {
           await sock.sendMessage(chatId, {
             audio: buffer,
-            mimetype: quoted.audioMessage.mimetype || 'audio/mp4',
-            ptt: quoted.audioMessage.ptt || false,
-            mentions
+            mimetype: media.mimetype || "audio/mp4",
+            ptt: media.ptt || false
           }, { quoted: msg });
 
           return;
         }
 
         // STICKER
-        if (quoted.stickerMessage) {
-          const stream = await downloadContentFromMessage(
-            quoted.stickerMessage,
-            'sticker'
-          );
-
-          const chunks = [];
-          for await (const chunk of stream) {
-            chunks.push(chunk);
-          }
-
-          const buffer = Buffer.concat(chunks);
-
+        if (tipo === "sticker") {
           await sock.sendMessage(chatId, {
-            sticker: buffer,
-            mentions
+            sticker: buffer
           }, { quoted: msg });
 
           return;
         }
 
         // DOCUMENTO
-        if (quoted.documentMessage) {
-          const stream = await downloadContentFromMessage(
-            quoted.documentMessage,
-            'document'
-          );
-
-          const chunks = [];
-          for await (const chunk of stream) {
-            chunks.push(chunk);
-          }
-
-          const buffer = Buffer.concat(chunks);
-
+        if (tipo === "document") {
           await sock.sendMessage(chatId, {
             document: buffer,
-            mimetype: quoted.documentMessage.mimetype,
-            fileName: quoted.documentMessage.fileName || 'documento',
-            caption: quoted.documentMessage.caption || '',
-            mentions
-          }, { quoted: msg });
-
-          return;
-        }
-
-        // TEXTO CITADO
-        const quotedText =
-          quoted.conversation ||
-          quoted.extendedTextMessage?.text;
-
-        if (quotedText) {
-          await sock.sendMessage(chatId, {
-            text: quotedText,
-            mentions
+            mimetype: media.mimetype,
+            fileName: media.fileName || "documento"
           }, { quoted: msg });
 
           return;
         }
 
       } catch (error) {
-        console.error('[.n] Error reenviando multimedia:', error);
+        console.error("[.n] Error reenviando media:", error);
 
         await sock.sendMessage(chatId, {
-          text: '❌ No pude reenviar ese archivo.'
+          text: "❌ No pude reenviar ese archivo."
         }, { quoted: msg });
 
         return;
       }
     }
 
-    // ─────────────────────────────
-    // SIN TEXTO NI MENSAJE CITADO
-    // ─────────────────────────────
+    // .n sin texto ni respuesta
     await sock.sendMessage(chatId, {
-      text: '❌ Escribe un mensaje o responde a una imagen, audio, video, sticker o documento.\n\nEjemplos:\n.n Hola a todos 👋\n\nO responde a una imagen con:\n.n'
+      text: "❌ Escribe un mensaje o responde a una imagen, audio, video, sticker o documento."
     }, { quoted: msg });
   }
 };
